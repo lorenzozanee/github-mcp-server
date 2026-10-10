@@ -256,11 +256,12 @@ func Test_ListCodeScanningAlerts(t *testing.T) {
 			textContent := getTextResult(t, result)
 
 			// Unmarshal and verify the result
-			var returnedAlerts []*github.Alert
-			err = json.Unmarshal([]byte(textContent.Text), &returnedAlerts)
+			var response CodeScanningAlertsOutput
+			err = json.Unmarshal([]byte(textContent.Text), &response)
 			assert.NoError(t, err)
-			assert.Len(t, returnedAlerts, len(tc.expectedAlerts))
-			for i, alert := range returnedAlerts {
+			assert.Len(t, response.Alerts, len(tc.expectedAlerts))
+			assert.Equal(t, SecurityPageInfo{}, response.PageInfo)
+			for i, alert := range response.Alerts {
 				assert.Equal(t, *tc.expectedAlerts[i].Number, *alert.Number)
 				assert.Equal(t, *tc.expectedAlerts[i].State, *alert.State)
 				assert.Equal(t, *tc.expectedAlerts[i].Rule.ID, *alert.Rule.ID)

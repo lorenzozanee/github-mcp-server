@@ -17,6 +17,62 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSecurityPageInfo(t *testing.T) {
+	assert.Equal(t, SecurityPageInfo{HasNextPage: true, HasPreviousPage: true}, securityPageInfo(&github.Response{
+		NextPage: 2,
+		PrevPage: 1,
+	}))
+	assert.Equal(t, SecurityPageInfo{HasNextPage: true, HasPreviousPage: true, NextCursor: "next", PrevCursor: "previous"}, securityPageInfo(&github.Response{
+		After:  "next",
+		Before: "previous",
+	}))
+}
+
+func TestSecurityAlertListsIncludePaginationMetadata(t *testing.T) {
+	tests := []struct {
+		name  string
+		tool  inventory.ServerTool
+		route string
+		body  any
+	}{
+		{
+			name:  "code scanning",
+			tool:  ListCodeScanningAlerts(translations.NullTranslationHelper),
+			route: GetReposCodeScanningAlertsByOwnerByRepo,
+			body:  []*github.Alert{{Number: new(42)}},
+		},
+		{
+			name:  "secret scanning",
+			tool:  ListSecretScanningAlerts(translations.NullTranslationHelper),
+			route: GetReposSecretScanningAlertsByOwnerByRepo,
+			body:  []*github.SecretScanningAlert{{Number: new(43)}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := mockResponse(t, http.StatusOK, tt.body)
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Link", `<https://api.github.com/alerts?page=2>; rel="next", <https://api.github.com/alerts?page=1>; rel="prev"`)
+				response.ServeHTTP(w, r)
+			})
+			deps := BaseDeps{Client: mustNewGHClient(t, MockHTTPClientWithHandlers(map[string]http.HandlerFunc{tt.route: handler}))}
+			request := createMCPRequest(map[string]any{"owner": "owner", "repo": "repo"})
+			result, err := tt.tool.Handler(deps)(ContextWithDeps(context.Background(), deps), &request)
+			require.NoError(t, err)
+			require.False(t, result.IsError)
+
+			var output struct {
+				Alerts   []json.RawMessage `json:"alerts"`
+				PageInfo SecurityPageInfo  `json:"pageInfo"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(getTextResult(t, result).Text), &output))
+			require.Len(t, output.Alerts, 1)
+			assert.True(t, output.PageInfo.HasNextPage)
+			assert.True(t, output.PageInfo.HasPreviousPage)
+		})
+	}
+}
+
 func securityOutputSchema(t *testing.T, name string) *jsonschema.Schema {
 	t.Helper()
 	var schema *jsonschema.Schema
@@ -27,11 +83,11 @@ func securityOutputSchema(t *testing.T, name string) *jsonschema.Schema {
 	case "get_code_scanning_alert":
 		schema, err = jsonschema.For[*CodeScanningAlertOutput](nil)
 	case "list_code_scanning_alerts":
-		schema, err = jsonschema.For[[]*CodeScanningAlertOutput](nil)
+		schema, err = jsonschema.For[CodeScanningAlertsOutput](nil)
 	case "get_secret_scanning_alert":
 		schema, err = jsonschema.For[*SecretScanningAlertOutput](nil)
 	case "list_secret_scanning_alerts":
-		schema, err = jsonschema.For[[]*SecretScanningAlertOutput](nil)
+		schema, err = jsonschema.For[SecretScanningAlertsOutput](nil)
 	case "get_dependabot_alert":
 		schema, err = jsonschema.For[*DependabotAlertOutput](nil)
 	case "list_dependabot_alerts":
@@ -136,12 +192,18 @@ func TestTypedSecurityToolOutputs(t *testing.T) {
 	globalAdvisory.CWEs = []*github.AdvisoryCWEs{{CWEID: new("CWE-79"), Name: new("Cross-site scripting")}}
 	codeQualityJSON := json.RawMessage(`{"unknown_legacy_field":"preserved in text","url":"https://api.github.com/repos/owner/repo/code-quality/findings/42","state":"open","rule":{"id":"test-rule","description":"Test rule"},"number":42}`)
 	legacyOutputs := map[string]any{
-		"get_code_quality_finding":    codeQualityFinding,
-		"get_code_scanning_alert":     codeScanningAlert,
-		"list_code_scanning_alerts":   []*github.Alert{codeScanningAlert},
-		"get_secret_scanning_alert":   secretScanningAlert,
-		"list_secret_scanning_alerts": []*github.SecretScanningAlert{secretScanningAlert},
-		"get_dependabot_alert":        dependabotAlert,
+		"get_code_quality_finding": codeQualityFinding,
+		"get_code_scanning_alert":  codeScanningAlert,
+		"list_code_scanning_alerts": struct {
+			Alerts   []*github.Alert `json:"alerts"`
+			PageInfo pageInfo        `json:"pageInfo"`
+		}{Alerts: []*github.Alert{codeScanningAlert}},
+		"get_secret_scanning_alert": secretScanningAlert,
+		"list_secret_scanning_alerts": struct {
+			Alerts   []*github.SecretScanningAlert `json:"alerts"`
+			PageInfo pageInfo                      `json:"pageInfo"`
+		}{Alerts: []*github.SecretScanningAlert{secretScanningAlert}},
+		"get_dependabot_alert": dependabotAlert,
 		"list_dependabot_alerts": struct {
 			Alerts   []*github.DependabotAlert `json:"alerts"`
 			PageInfo pageInfo                  `json:"pageInfo"`

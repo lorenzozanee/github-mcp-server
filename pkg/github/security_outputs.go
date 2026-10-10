@@ -254,9 +254,28 @@ type SecurityPageInfo struct {
 	PrevCursor      string `json:"prevCursor,omitempty"`
 }
 
+type CodeScanningAlertsOutput struct {
+	Alerts   []*CodeScanningAlertOutput `json:"alerts"`
+	PageInfo SecurityPageInfo           `json:"pageInfo"`
+}
+
+type SecretScanningAlertsOutput struct {
+	Alerts   []*SecretScanningAlertOutput `json:"alerts"`
+	PageInfo SecurityPageInfo             `json:"pageInfo"`
+}
+
 type DependabotAlertsOutput struct {
 	Alerts   []*DependabotAlertOutput `json:"alerts"`
 	PageInfo SecurityPageInfo         `json:"pageInfo"`
+}
+
+func securityPageInfo(resp *github.Response) SecurityPageInfo {
+	return SecurityPageInfo{
+		HasNextPage:     resp.NextPage != 0 || resp.After != "",
+		HasPreviousPage: resp.PrevPage != 0 || resp.Before != "",
+		NextCursor:      resp.After,
+		PrevCursor:      resp.Before,
+	}
 }
 
 func securityPagination(page, perPage *int) PaginationParams {
